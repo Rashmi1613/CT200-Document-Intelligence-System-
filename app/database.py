@@ -15,7 +15,10 @@ def create_tables():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # One row per document
+    # -------------------------
+    # Documents
+    # -------------------------
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS documents(
 
@@ -25,7 +28,10 @@ def create_tables():
     )
     """)
 
-    # Every upload creates a new version
+    # -------------------------
+    # Document Versions
+    # -------------------------
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS document_versions(
 
@@ -42,7 +48,10 @@ def create_tables():
     )
     """)
 
-    # Sections for each version
+    # -------------------------
+    # Sections
+    # -------------------------
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sections(
 
@@ -65,15 +74,78 @@ def create_tables():
         content_hash TEXT,
 
         FOREIGN KEY(document_version_id)
-            REFERENCES document_versions(id),
-
-        FOREIGN KEY(parent_id)
-            REFERENCES sections(id)
+            REFERENCES document_versions(id)
     )
     """)
 
-    conn.commit()
-    conn.close()
+    # -------------------------
+    # Named Selections
+    # -------------------------
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS selection_groups(
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        name TEXT NOT NULL,
+
+        document_version_id INTEGER NOT NULL,
+
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY(document_version_id)
+            REFERENCES document_versions(id)
+    )
+    """)
+
+    # -------------------------
+    # Selection Items
+    # -------------------------
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS selection_items(
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        selection_id INTEGER NOT NULL,
+
+        logical_node_id INTEGER NOT NULL,
+
+        FOREIGN KEY(selection_id)
+            REFERENCES selection_groups(id)
+    )
+""")
+
+# -------------------------
+# LLM Generations
+# -------------------------
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS generations(
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    selection_id INTEGER NOT NULL,
+
+    source_hash TEXT NOT NULL,
+
+    prompt TEXT NOT NULL,
+
+    response TEXT,
+
+    model_name TEXT,
+
+    status TEXT NOT NULL,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY(selection_id)
+        REFERENCES selection_groups(id)
+)
+""")
+
+conn.commit()
+conn.close()
 
 
 def save_document(root):
@@ -96,7 +168,6 @@ def save_document(root):
 
     row = cursor.fetchone()
 
-    # New document
     if row is None:
 
         cursor.execute(
@@ -113,7 +184,6 @@ def save_document(root):
         lookup = {}
         max_logical_node_id = 0
 
-    # Existing document
     else:
 
         document_id = row["id"]
@@ -185,7 +255,7 @@ def save_section(
     ).hexdigest()
 
     # -------------------------
-    # Reuse logical node id
+    # Reuse logical node IDs
     # -------------------------
 
     key = (node.title, node.level)
@@ -228,12 +298,17 @@ def save_section(
         )
     )
 
+    # IMPORTANT:
+    # Store logical_node_id as parent_id
+    # so children remain linked across versions.
+
     for child in node.children:
+
         save_section(
-        cursor=cursor,
-        document_version_id=document_version_id,
-        node=child,
-        parent_id=logical_node_id,
-        lookup=lookup,
-        max_logical_node_id=max_logical_node_id
+            cursor=cursor,
+            document_version_id=document_version_id,
+            node=child,
+            parent_id=logical_node_id,
+            lookup=lookup,
+            max_logical_node_id=max_logical_node_id
         )

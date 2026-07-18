@@ -1,4 +1,4 @@
-from dns.resolver import query
+
 
 from app.database import get_connection
 
