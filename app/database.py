@@ -228,18 +228,12 @@ def save_section(
         )
     )
 
-    section_id = cursor.lastrowid
-
-    # -------------------------
-    # Save children recursively
-    # -------------------------
-
     for child in node.children:
         save_section(
-            cursor=cursor,
-            document_version_id=document_version_id,
-            node=child,
-            parent_id=section_id,
-            lookup=lookup,
-            max_logical_node_id=max_logical_node_id
+        cursor=cursor,
+        document_version_id=document_version_id,
+        node=child,
+        parent_id=logical_node_id,
+        lookup=lookup,
+        max_logical_node_id=max_logical_node_id
         )
