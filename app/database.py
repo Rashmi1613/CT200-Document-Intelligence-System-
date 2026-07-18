@@ -78,6 +78,10 @@ def create_tables():
 
 def save_document(root):
 
+    from app.services.version_service import VersionService
+
+    version_service = VersionService()
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -92,23 +96,8 @@ def save_document(root):
 
     row = cursor.fetchone()
 
-    if row:
-        document_id = row["id"]
-
-        cursor.execute(
-            """
-            SELECT MAX(version_number)
-            FROM document_versions
-            WHERE document_id=?
-            """,
-            (document_id,)
-        )
-
-        latest = cursor.fetchone()[0]
-
-        version_number = latest + 1
-
-    else:
+    # New document
+    if row is None:
 
         cursor.execute(
             """
@@ -120,6 +109,30 @@ def save_document(root):
 
         document_id = cursor.lastrowid
         version_number = 1
+
+        lookup = {}
+        max_logical_node_id = 0
+
+    # Existing document
+    else:
+
+        document_id = row["id"]
+
+        version_number = (
+            version_service.get_latest_version(document_id) + 1
+        )
+
+        latest_version_id = (
+            version_service.get_latest_version_id(document_id)
+        )
+
+        lookup = version_service.build_lookup(
+            latest_version_id
+        )
+
+        max_logical_node_id = (
+            version_service.get_max_logical_node_id()
+        )
 
     # -------------------------
     # Create new version
@@ -141,14 +154,13 @@ def save_document(root):
 
     document_version_id = cursor.lastrowid
 
-    logical_node_counter = [1]
-
     save_section(
-        cursor,
-        document_version_id,
-        root,
-        None,
-        logical_node_counter
+        cursor=cursor,
+        document_version_id=document_version_id,
+        node=root,
+        parent_id=None,
+        lookup=lookup,
+        max_logical_node_id=[max_logical_node_id]
     )
 
     conn.commit()
@@ -162,7 +174,8 @@ def save_section(
     document_version_id,
     node,
     parent_id,
-    logical_node_counter
+    lookup,
+    max_logical_node_id
 ):
 
     content = "\n".join(node.content)
@@ -171,8 +184,21 @@ def save_section(
         content.encode("utf-8")
     ).hexdigest()
 
-    logical_node_id = logical_node_counter[0]
-    logical_node_counter[0] += 1
+    # -------------------------
+    # Reuse logical node id
+    # -------------------------
+
+    key = (node.title, node.level)
+
+    if key in lookup:
+        logical_node_id = lookup[key]
+    else:
+        max_logical_node_id[0] += 1
+        logical_node_id = max_logical_node_id[0]
+
+    # -------------------------
+    # Save section
+    # -------------------------
 
     cursor.execute(
         """
@@ -204,11 +230,16 @@ def save_section(
 
     section_id = cursor.lastrowid
 
+    # -------------------------
+    # Save children recursively
+    # -------------------------
+
     for child in node.children:
         save_section(
-            cursor,
-            document_version_id,
-            child,
-            section_id,
-            logical_node_counter
+            cursor=cursor,
+            document_version_id=document_version_id,
+            node=child,
+            parent_id=section_id,
+            lookup=lookup,
+            max_logical_node_id=max_logical_node_id
         )
